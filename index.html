@@ -147,6 +147,8 @@ function pts(s,S){let a,target,rate=s.rate,L=len(s);
   let diff=target-a;while(diff>Math.PI)diff-=2*Math.PI;while(diff<-Math.PI)diff+=2*Math.PI;
   a+=Math.max(-rate,Math.min(rate,diff));x+=Math.cos(a)*d;y+=Math.sin(a)*d;p.push([x,y])}
  return p}
+const zoneOf=x=>x<CX-23?0:x>CX+23?2:1;
+function zoneBald(S,z){return S.strands.filter(s=>s.layer!=='beard'&&zoneOf(s.x)===z).every(s=>s.stage>=5)}
 function inFront(s,S){if(s.layer==='nape')return false;return s.layer!=='back'||(Math.abs(S.w)>.35&&((S.w>0&&s.side<0)||(S.w<0&&s.side>0)))}
 
 function strokeStrand(ctx,p,color,wet){if(p.length<2)return;ctx.beginPath();ctx.moveTo(p[0][0],p[0][1]);
@@ -189,11 +191,11 @@ function draw(ctx,S){const c=S.c,hc=mix(c.hair,c.wet,S.wet);
  else if(joy){ctx.fillStyle='#e0507a';ctx.arc(CX,CY+32,12,0,Math.PI);ctx.closePath();ctx.fill();ctx.strokeStyle='#3b2a20';ctx.stroke()}
  else{ctx.strokeStyle=c.lips?'#e0507a':'#3b2a20';ctx.arc(CX,CY+30,10,Math.PI*.15,Math.PI*.85);ctx.stroke()}
  // hair cap (gone when every hair is cut off)
- const hairLeft=S.strands.some(s=>s.layer!=='beard'&&s.stage<5);
- if(hairLeft){const up=S.bangDir<0?Math.min(1,-S.bangDir/HALF):0;
-  ctx.save();ctx.beginPath();ctx.rect(0,0,W,CY-30-18*up);ctx.clip();ctx.fillStyle=hc;ctx.strokeStyle='#3b2a20';ctx.lineWidth=4;
+ const bald=[0,1,2].map(z=>zoneBald(S,z));
+ if(!bald.every(Boolean)){const up=S.bangDir<0?Math.min(1,-S.bangDir/HALF):0;
+  ctx.save();ctx.beginPath();[0,1,2].forEach(z=>{if(!bald[z]){const x0=[0,CX-23,CX+23][z],x1=[CX-23,CX+23,W][z];ctx.rect(x0,0,x1-x0,CY-30-18*up)}});ctx.clip();ctx.fillStyle=hc;ctx.strokeStyle='#3b2a20';ctx.lineWidth=4;
   ctx.beginPath();ctx.ellipse(CX,CY-6,FRX+7,FRY+4,0,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.restore();
-  if(c.ribbon){ctx.fillStyle='#ff5a8a';const rx=CX+46,ry=CY-62;
+  if(c.ribbon&&!bald[2]){ctx.fillStyle='#ff5a8a';const rx=CX+46,ry=CY-62;
    [[1],[-1]].forEach(([d])=>{ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rx+d*22,ry-14);ctx.lineTo(rx+d*22,ry+14);ctx.closePath();ctx.fill();ctx.stroke()});
    ctx.beginPath();ctx.arc(rx,ry,7,0,Math.PI*2);ctx.fill();ctx.stroke()}}
  S.strands.forEach(s=>{if(len(s)>0&&inFront(s,S))strokeStrand(ctx,pts(s,S),hc,S.wet)});
@@ -303,8 +305,11 @@ function segDist(p,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((
 const toward=(v,t,k)=>v+(t-v)*k;
 
 function cutAt(a,b,radius){const S=st,now=performance.now();let hit=false;
- S.strands.forEach(s=>{if(s.stage>=5||now-s.last<280)return;const p=pts(s,S);
-  if(!p.some(q=>segDist(q,a,b)<radius))return;
+ const maxStage=tool==='scissors'?4:5;
+ const touches=s=>{const hidden=!inFront(s,S);return pts(s,S).some(q=>!(hidden&&((q[0]-CX)/FRX)**2+((q[1]-CY)/FRY)**2<1)&&segDist(q,a,b)<radius)};
+ const onBeard=tool==='razor'&&S.strands.some(s=>s.layer==='beard'&&s.stage<5&&touches(s));
+ S.strands.forEach(s=>{if(s.stage>=maxStage||now-s.last<280)return;if(onBeard&&s.layer!=='beard')return;const p=pts(s,S);
+  if(!touches(s))return;
   if(tool==='razor'&&s.layer!=='beard')say('razor');
   const keep=Math.floor(len({L0:s.L0,stage:s.stage+1})/STEP);
   const off=p.slice(keep);if(off.length>1&&S.pieces.length<90)S.pieces.push({p:off.map(q=>[q[0],q[1]]),vy:.5,vx:(Math.random()-.5)*2});
@@ -329,8 +334,14 @@ function act(a,b){const S=st,[x,y]=b;
   S.parts.push({k:'wind',x,y:y+(Math.random()-.5)*20,vx:dx/dl*6,vy:dy/dl*6,life:.9})}
  else if(tool==='scissors'){snip();cutAt(a,b,14*Math.max(1,1.1/scale))}
  else if(tool==='razor'){const rr=22*Math.max(1,1.1/scale);if(cutAt(a,b,rr))S.parts.push({k:'spark',x,y,vx:0,vy:-1,life:1});
+  if(((x-CX)/(FRX+7))**2+((y-(CY-6))/(FRY+4))**2<1&&y<CY-28){const z=zoneOf(x),now=performance.now();
+   if(!S.zoneLast)S.zoneLast=[0,0,0];
+   if(!zoneBald(S,z)&&now-S.zoneLast[z]>280){S.zoneLast[z]=now;say('razor');
+    S.strands.forEach(s=>{if(s.layer!=='beard'&&zoneOf(s.x)===z&&s.stage<5){const p=pts(s,S),keep=Math.floor(len({L0:s.L0,stage:s.stage+1})/STEP),off=p.slice(keep);
+     if(off.length>1&&S.pieces.length<90)S.pieces.push({p:off.map(q=>[q[0],q[1]]),vy:.5,vx:(Math.random()-.5)*2});s.stage++;s.last=now}});
+    S.parts.push({k:'spark',x,y,vx:0,vy:-1,life:1})}}
   const now=performance.now();[-1,1].forEach((d,bi)=>{if(S.brows[bi]>=3||now-S.browLast[bi]<280)return;
-   const c=[CX+d*23,CY-14];if(segDist(c,a,b)<rr+8){S.brows[bi]++;S.browLast[bi]=now;say('razor');
+   const c=[CX+d*23,CY-14];if(segDist(c,a,b)<15){S.brows[bi]++;S.browLast[bi]=now;say('razor');
     S.parts.push({k:'spark',x:c[0],y:c[1],vx:0,vy:-1,life:1});
     if(S.pieces.length<90)S.pieces.push({p:[[c[0]-9,c[1]],[c[0]+9,c[1]-2]],vy:.5,vx:(Math.random()-.5)*2})}})}}
 
